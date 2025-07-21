@@ -1,0 +1,1854 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D 躲避射击游戏</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden; /* Prevent scrollbars */
+            font-family: 'Inter', sans-serif;
+            background-color: #1a202c; /* Dark background */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            color: #e2e8f0;
+            cursor: none; /* Hide default cursor for better FPS experience */
+        }
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        canvas {
+            display: block;
+            background-color: #333; /* Darker background for the game area */
+            border-radius: 10px;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+        }
+        #ui-overlay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 40px;
+            font-size: 1.5rem;
+            font-weight: bold;
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 10px 20px;
+            border-radius: 10px;
+            z-index: 10;
+        }
+        #game-message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.8);
+            padding: 30px 50px;
+            border-radius: 15px;
+            text-align: center;
+            font-size: 2rem;
+            font-weight: bold;
+            color: #fff;
+            display: none; /* Hidden by default */
+            z-index: 20;
+            box-shadow: 0 0 30px rgba(255, 255, 255, 0.2);
+        }
+        #game-message button {
+            margin-top: 20px;
+            padding: 12px 25px;
+            font-size: 1.2rem;
+            font-weight: bold;
+            background-color: #4CAF50; /* Green */
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.3s ease, transform 0.2s ease;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+        }
+        #game-message button:hover {
+            background-color: #45a049;
+            transform: translateY(-2px);
+        }
+        #game-message button:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 2px;
+            height: 2px;
+            background-color: white;
+            border-radius: 50%;
+            box-shadow: 0 0 5px rgba(255, 255, 255, 0.8);
+            z-index: 100; /* Ensure it's on top */
+        }
+
+        /* --- 攻击方向指示器样式 --- */
+        #hit-indicators {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; /* Allows clicks to pass through */
+            z-index: 50; /* Above other UI elements */
+        }
+        .hit-indicator {
+            position: absolute;
+            width: 30px; /* Size of the indicator */
+            height: 30px;
+            background-color: rgba(255, 0, 0, 0.7); /* Red, semi-transparent */
+            border-radius: 50%; /* Make it a circle */
+            display: none; /* Hidden by default */
+            opacity: 0;
+            transition: opacity 0.1s ease-out; /* For fading out */
+        }
+        /* Positioning the indicators */
+        #hit-front { top: 10%; left: 50%; transform: translateX(-50%); }
+        #hit-back { bottom: 10%; left: 50%; transform: translateX(-50%); }
+        #hit-left { left: 10%; top: 50%; transform: translateY(-50%); }
+        #hit-right { right: 10%; top: 50%; transform: translateY(-50%); }
+
+        /* --- 武器UI样式 --- */
+        #weapon-display {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 15px 20px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            color: #e2e8f0;
+            font-family: 'Inter', sans-serif;
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.4);
+            z-index: 10;
+        }
+        #weapon-icon {
+            width: 60px;
+            height: 60px;
+            border-radius: 8px;
+            object-fit: cover; /* Ensures image covers the area */
+            background-color: #4a5568; /* Placeholder background */
+        }
+        #bullet-info {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+        }
+        #bullet-count {
+            font-size: 2.2rem;
+            font-weight: bold;
+            color: #fff;
+        }
+        #weapon-name {
+            font-size: 1.2rem;
+            color: #cbd5e0;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <div id="ui-overlay">
+            <div id="health-display">生命值: 100 (复活: 3)</div>
+            <div id="score-display">分数: 0</div>
+            <div id="wave-display">波次: 1 / 5 (敌人: 0/5)</div> <!-- 更新：波次显示 -->
+        </div>
+        <div id="game-message">
+            <span id="message-text">游戏结束！</span><br>
+            <button id="restart-button">重新开始</button>
+        </div>
+        <div id="crosshair"></div> <!-- Crosshair for FPS -->
+        <!-- 攻击方向指示器容器 -->
+        <div id="hit-indicators">
+            <div id="hit-front" class="hit-indicator"></div>
+            <div id="hit-back" class="hit-indicator"></div>
+            <div id="hit-left" class="hit-indicator"></div>
+            <div id="hit-right" class="hit-indicator"></div>
+        </div>
+
+        <!-- 武器UI显示 -->
+        <div id="weapon-display">
+            <img id="weapon-icon" src="https://placehold.co/60x60/0077ff/ffffff?text=Pistol" alt="Weapon Icon">
+            <div id="bullet-info">
+                <span id="bullet-count">8/8 (∞)</span>
+                <span id="weapon-name">手枪</span>
+            </div>
+        </div>
+
+        <canvas id="gameCanvas"></canvas>
+    </div>
+
+    <script type="module">
+        // --- 全局变量和初始化 ---
+        let scene, camera, renderer;
+        let player; // Player object will now contain mesh, health, revives etc.
+        const playerSpeed = 0.15; // Slightly reduced speed for FPS feel
+        let score = 0;
+
+        const allCharacters = []; // Array to hold player and all enemies for unified management
+        const enemies = []; // Separate array for enemies for enemy-specific logic
+
+        const playerBullets = [];
+        const enemyBullets = []; // Bullets fired by enemies
+        const obstacles = []; // 新增：障碍物数组
+        let temporaryObstacles = []; // For M-cv7 generated obstacles
+
+        const bulletSpeed = 0.8; // Increased bullet speed for FPS
+        const enemyBulletSpeed = 0.3; // Base speed for enemy bullets
+        let lastEnemySpawnTime = 0;
+
+        const healthDisplay = document.getElementById('health-display');
+        const scoreDisplay = document.getElementById('score-display');
+        const gameMessage = document.getElementById('game-message');
+        const messageText = document.getElementById('message-text');
+        const restartButton = document.getElementById('restart-button');
+        const crosshair = document.getElementById('crosshair'); // Crosshair element
+        const waveDisplay = document.getElementById('wave-display'); // 更新：波次显示元素
+
+        // 攻击方向指示器元素
+        const hitIndicatorFront = document.getElementById('hit-front');
+        const hitIndicatorBack = document.getElementById('hit-back');
+        const hitIndicatorLeft = document.getElementById('hit-left');
+        const hitIndicatorRight = document.getElementById('hit-right');
+
+        // 武器UI元素
+        const weaponIcon = document.getElementById('weapon-icon');
+        const bulletCountDisplay = document.getElementById('bullet-count');
+        const weaponNameDisplay = document.getElementById('weapon-name');
+
+        let isGameOver = false;
+        let isGamePaused = false; // 用于暂停游戏，例如在显示游戏结束消息时
+
+        // --- 波次模式变量 ---
+        const waveDefinitions = [
+            { waveNumber: 1, enemyCount: 5, spawnRateMultiplier: 1.0 }, // 5 enemies, normal spawn rate (2000ms)
+            { waveNumber: 2, enemyCount: 7, spawnRateMultiplier: 1.2 }, // 7 enemies, faster spawn (approx 1666ms)
+            { waveNumber: 3, enemyCount: 10, spawnRateMultiplier: 1.5 }, // 10 enemies, faster spawn (approx 1333ms)
+            { waveNumber: 4, enemyCount: 12, spawnRateMultiplier: 1.8 }, // 12 enemies, faster spawn (approx 1111ms)
+            { waveNumber: 5, enemyCount: 15, spawnRateMultiplier: 2.0 }, // 15 enemies, fastest spawn (1000ms)
+            { waveNumber: 6, enemyCount: 18, spawnRateMultiplier: 2.2 }, // More enemies, faster spawn
+            { waveNumber: 7, enemyCount: 20, spawnRateMultiplier: 2.5 }, // Even more enemies, even faster spawn
+            { waveNumber: 8, enemyCount: 25, spawnRateMultiplier: 2.8 }, // Significant increase
+            { waveNumber: 9, enemyCount: 30, spawnRateMultiplier: 3.0 }, // High difficulty
+            { waveNumber: 10, enemyCount: 35, spawnRateMultiplier: 3.2 } // Final challenge
+        ];
+        let currentWaveIndex = 0;
+        let enemiesSpawnedInWave = 0; // 当前波次已生成的敌人数量
+        let enemiesDefeatedInWave = 0; // 当前波次已永久淘汰的敌人数量
+        const enemySpawnIntervalBase = 2000; // 基础敌人生成间隔 (毫秒)
+
+        // 键盘状态
+        const keys = {
+            w: false, a: false, s: false, d: false,
+            space: false,
+            c: false, // Added for dash
+            r: false // Added for reload
+        };
+
+        // 鼠标状态
+        let isMouseDown = false;
+        let isRightMouseDown = false; // Track right mouse button state
+        let lastPlayerShotTime = 0; // Renamed for clarity (player specific)
+        const mouseSensitivity = 0.002; // 鼠标灵敏度
+
+        // --- 跳跃和重力相关变量 ---
+        const gravity = -0.02; // 重力加速度
+        const jumpForce = 0.5; // 玩家跳跃的初始向上速度
+        const playerGroundY = 0.5; // 玩家站立时的Y坐标
+
+        // --- 冲刺相关变量 ---
+        const dashDuration = 200; // 冲刺持续时间 (毫秒)
+        const dashCooldown = 1000; // 冲刺冷却时间 (毫秒)
+        const playerDashSpeed = 0.5; // 玩家冲刺速度
+        const dashDirection = new THREE.Vector3(); // 存储玩家冲刺方向
+
+        // --- 武器系统变量 ---
+        const weaponDefinitions = {
+            pistol: {
+                name: "手枪",
+                clipSize: 8,
+                fireRate: 500, // Reduced fire rate for pistol
+                reloadTime: 2000,
+                weaponImage: "https://placehold.co/60x60/0077ff/ffffff?text=Pistol",
+                bulletDamage: 10 // Damage per bullet
+            },
+            mp5: {
+                name: "MP5冲锋枪",
+                clipSize: 30,
+                fireRate: 100, // 0.1 second delay for rapid fire
+                reloadTime: 2500,
+                weaponImage: "https://placehold.co/60x60/ff0000/ffffff?text=MP5",
+                bulletDamage: 10 // Damage per bullet
+            },
+            sniper: { // 新增：M56狙击枪定义
+                name: "M56狙击枪",
+                clipSize: 5,
+                fireRate: 1500, // 狙击枪射速较慢
+                reloadTime: 3000, // 狙击枪装弹时间较长
+                weaponImage: "https://placehold.co/60x60/800080/ffffff?text=Sniper", // 紫色图标
+                bulletDamage: 50 // MODIFIED: Changed from 1000 to 50
+            },
+            // --- REPLACED U喷 WITH F-7 START ---
+            f7: { // 替换 U喷 为 F-7
+                name: "F-7",
+                clipSize: 100,
+                fireRate: 100, // Fast fire rate
+                reloadTime: 2500,
+                weaponImage: "https://placehold.co/60x60/FF4500/FFFFFF?text=F-7", // Orange-red icon
+                bulletDamage: 20,
+                playerHealthCapIncrease: 100, // Player specific: +100 max health per shot
+                enemyHealthRegenPerShot: 10 // Enemy specific: +10 health per shot
+            },
+            // --- REPLACED U喷 WITH F-7 END ---
+            ve8: { // 替换 C-5 为 VE-8
+                name: "VE-8",
+                clipSize: 50,
+                fireRate: 150, // 连发，射速中等偏快
+                reloadTime: 2000,
+                weaponImage: "https://placehold.co/60x60/FF00FF/000000?text=VE-8", // Magenta icon
+                bulletDamage: 1, // 每颗子弹伤害
+                playerHealthRegen: 50, // 玩家每打一发子弹回血量
+                enemyForbidden: true // 敌人不能使用此武器
+            },
+            kird: {
+                name: "KIRD",
+                clipSize: 60,
+                fireRate: 150, // Rapid fire
+                reloadTime: 2800,
+                weaponImage: "https://placehold.co/60x60/00FFFF/000000?text=KIRD", // Cyan icon
+                bulletDamage: 25,
+                piercing: true // KIRD property: bullets can pass through obstacles
+            },
+            hv5: {
+                name: "HV5",
+                clipSize: 20,
+                fireRate: 200, // Burst fire, moderate rate
+                reloadTime: 2500,
+                weaponImage: "https://placehold.co/60x60/FFA500/FFFFFF?text=HV5", // Orange icon
+                bulletDamage: 25, // Direct bullet damage (before explosion)
+                explosive: true // HV5 property: bullets explode on impact
+            },
+            dr18: { // 替换 DR-5 为 DR-18
+                name: "DR-18",
+                clipSize: 600,
+                fireRate: 100, // Very rapid fire
+                reloadTime: 3000,
+                weaponImage: "https://placehold.co/60x60/4B0082/FFFFFF?text=DR-18", // Indigo color for DR-18
+                bulletDamage: 1000, // High damage
+                piercing: true, // Bullets pass through obstacles
+                enemyVision: true // Special property for seeing enemies
+            },
+            mcv7: {
+                name: "M-cv7",
+                clipSize: 500,
+                fireRate: 80, // Fast fire rate
+                reloadTime: 3500,
+                weaponImage: "https://placehold.co/60x60/FFD700/000000?text=M-cv7", // Gold icon
+                bulletDamage: 50,
+                playerPiercing: true, // Only player's M-cv7 bullets pierce
+                healthCapIncreaseOnKill: 50, // Player gains 50 max health on kill
+                obstacleOnKillCount: 3 // Generate obstacle every 3 kills
+            }
+        };
+
+        // 新增全局常量用于爆炸效果
+        const explosionRadius = 3; // 爆炸半径
+        const explosionDamage = 50; // 爆炸伤害
+
+        // 武器箱
+        let weaponBox;
+        const reviveDuration = 1500; // 1.5 seconds invulnerability after revive
+
+        // 障碍物数据
+        const obstacleData = [
+            { x: 5, z: 5, width: 4, depth: 4, height: 3 },
+            { x: -8, z: -8, width: 3, depth: 6, height: 4 },
+            { x: 0, z: -12, width: 6, depth: 2, height: 3.5 },
+            { x: -15, z: 5, width: 2, depth: 2, height: 5 },
+            { x: 12, z: -3, width: 2, depth: 8, height: 3 },
+            { x: -10, z: 10, width: 5, depth: 3, height: 2.5 },
+            { x: 7, z: -15, width: 3, depth: 3, height: 6 },
+            { x: -20, z: -18, width: 4, depth: 4, height: 3 },
+            { x: 18, z: 18, width: 2, depth: 6, height: 4 },
+            // 更多障碍物
+            { x: -5, z: 15, width: 3, depth: 3, height: 3 },
+            { x: 15, z: -10, width: 2, depth: 5, height: 4.5 },
+            { x: -18, z: -5, width: 6, depth: 2, height: 3 },
+            { x: 20, z: 0, width: 2, depth: 4, height: 5 },
+            { x: 0, z: 20, width: 8, depth: 2, height: 2.5 },
+            { x: -12, z: -12, width: 3, depth: 3, height: 4 },
+            { x: 10, z: 10, width: 4, depth: 2, height: 3.5 },
+            // 新增障碍物 (Existing from previous version)
+            { x: -22, z: 0, width: 3, depth: 3, height: 3.5 },
+            { x: 22, z: 0, width: 3, depth: 3, height: 3.5 },
+            { x: 0, z: 22, width: 3, depth: 3, height: 3.5 },
+            { x: 0, z: -22, width: 3, depth: 3, height: 3.5 },
+            { x: -10, z: -5, width: 2, depth: 2, height: 2.5 },
+            { x: 10, z: 5, width: 2, depth: 2, height: 2.5 },
+            { x: -5, z: 10, width: 2, depth: 2, height: 2.5 },
+            { x: 5, z: -10, width: 2, depth: 2, height: 2.5 },
+            // 新增障碍物
+            { x: -20, z: -5, width: 3, depth: 8, height: 3 },
+            { x: 20, z: 5, width: 3, depth: 8, height: 3 },
+            { x: 5, z: -20, width: 8, depth: 3, height: 3 },
+            { x: -5, z: 20, width: 8, depth: 3, height: 3 },
+            { x: 15, z: 15, width: 4, depth: 4, height: 4 },
+            { x: -15, z: -15, width: 4, depth: 4, height: 4 },
+            { x: 0, z: 0, width: 2, depth: 2, height: 2 }, // Small central obstacle
+            { x: 10, z: -18, width: 2, depth: 2, height: 5 },
+            { x: -10, z: 18, width: 2, depth: 2, height: 5 }
+        ];
+
+
+        // --- 碰撞检测辅助函数 ---
+        // 检查一个物体是否与任何障碍物碰撞
+        function isCollidingWithObstacles(object, obstacles) {
+            const objectBox = new THREE.Box3().setFromObject(object);
+            for (const obstacle of obstacles) {
+                const obstacleBox = new THREE.Box3().setFromObject(obstacle);
+                if (objectBox.intersectsBox(obstacleBox)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // 尝试移动物体，并处理与障碍物的碰撞（简单的轴向滑动）
+        function moveAndCollide(object, deltaX, deltaZ, obstacles) {
+            let originalX = object.position.x;
+            let originalZ = object.position.z;
+
+            // Attempt X-axis movement
+            object.position.x += deltaX;
+            object.updateMatrixWorld(); // Update world matrix for correct bounding box
+            if (isCollidingWithObstacles(object, obstacles)) {
+                object.position.x = originalX; // Collision, revert X
+                object.updateMatrixWorld();
+            }
+
+            // Attempt Z-axis movement
+            object.position.z += deltaZ;
+            object.updateMatrixWorld();
+            if (isCollidingWithObstacles(object, obstacles)) {
+                object.position.z = originalZ; // Collision, revert Z
+                object.updateMatrixWorld();
+            }
+        }
+
+        // --- 获取安全复活位置 ---
+        function getSafeRespawnPosition() {
+            const boundary = 24; // Map boundary
+            const minDistanceToCharacters = 8; // Minimum distance from other active characters
+            const maxAttempts = 50; // Max attempts to find a safe spot
+
+            for (let i = 0; i < maxAttempts; i++) {
+                const x = (Math.random() * 2 - 1) * boundary;
+                const z = (Math.random() * 2 - 1) * boundary;
+                const testPosition = new THREE.Vector3(x, playerGroundY, z); // Use playerGroundY for consistent height
+
+                // Create a temporary mesh to check for obstacle collision
+                const tempMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1)); // Placeholder size
+                tempMesh.position.copy(testPosition);
+                tempMesh.position.y = 0.5; // Align with obstacle base
+
+                let isSafe = true;
+                // Check distance to other active characters
+                for (const char of allCharacters) {
+                    if (!char.isDead && char.mesh.position.distanceTo(testPosition) < minDistanceToCharacters) {
+                        isSafe = false;
+                        break;
+                    }
+                }
+
+                // Check collision with obstacles
+                if (isSafe && isCollidingWithObstacles(tempMesh, obstacles)) {
+                    isSafe = false;
+                }
+
+                if (isSafe) {
+                    return testPosition;
+                }
+            }
+            // Fallback: if no safe spot found after many attempts, return a default one
+            console.warn("Could not find a completely safe respawn position. Using default.");
+            return new THREE.Vector3(0, playerGroundY, 0);
+        }
+
+        // --- 初始化场景 ---
+        function init() {
+            // 场景
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x282c34); // Set scene background color
+
+            // 摄像机
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 0.5, 0); // Camera at player head height (relative to player)
+
+            // 渲染器
+            const canvas = document.getElementById('gameCanvas');
+            renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio); // Adapt to high-DPI screens
+
+            // 光源
+            const ambientLight = new THREE.AmbientLight(0x404040); // Ambient light
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8); // Directional light
+            directionalLight.position.set(5, 10, 7);
+            scene.add(directionalLight);
+
+            // 地面
+            const planeGeometry = new THREE.PlaneGeometry(50, 50);
+            const planeMaterial = new THREE.MeshPhongMaterial({ color: 0x666666, side: THREE.DoubleSide });
+            const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+            plane.rotation.x = -Math.PI / 2; // Rotate to make plane horizontal
+            scene.add(plane);
+
+            // 玩家 (在第一人称中，玩家模型通常不可见，但其位置和方向很重要)
+            const playerGeometry = new THREE.BoxGeometry(1, 1, 1); // Player model, can be transparent or not rendered
+            const playerMaterial = new THREE.MeshBasicMaterial({ visible: false }); // Set to invisible
+
+            player = {
+                mesh: new THREE.Mesh(playerGeometry, playerMaterial),
+                type: 'player', // Identify as player
+                maxHealth: 100,
+                health: 100,
+                maxRevives: 3,
+                revivesRemaining: 3,
+                isDead: false,
+                isReviving: false, // Invulnerability flag after revive
+                lastDeathTime: 0,
+                velocityY: 0,
+                isDashing: false,
+                dashStartTime: 0,
+                lastDashTime: 0,
+                playerWeapons: [], // Player's weapon instances
+                selectedWeaponIndex: 0,
+                currentWeapon: null,
+                lastShotTime: 0, // Player's specific last shot time
+                currentTarget: null, // Player doesn't need a current target for movement, but for consistency
+                // C-5 specific state for player (now VE-8)
+                bulletsFiredSinceLastRegen: 0, // For C-5 enemy health regen (no longer applies to player VE-8)
+                isAimingDR5: false, // New property to track DR-5 aiming (now DR-18)
+                mcv7Kills: 0 // New property for M-cv7 kill counter
+            };
+
+            player.mesh.position.set(0, playerGroundY, 0); // Player stands on the ground
+            scene.add(player.mesh);
+            player.mesh.add(camera); // Add camera as a child of the player mesh
+
+            // Initialize player weapons
+            player.playerWeapons.push({
+                ...weaponDefinitions.pistol,
+                currentClipBullets: weaponDefinitions.pistol.clipSize,
+                isReloading: false,
+                lastReloadTime: 0
+            });
+            player.playerWeapons.push({
+                ...weaponDefinitions.mp5,
+                currentClipBullets: weaponDefinitions.mp5.clipSize,
+                isReloading: false,
+                lastReloadTime: 0
+            });
+            player.playerWeapons.push({ // 添加M56狙击枪
+                ...weaponDefinitions.sniper,
+                currentClipBullets: weaponDefinitions.sniper.clipSize,
+                isReloading: false,
+                lastReloadTime: 0
+            });
+            // --- PLAYER WEAPON INIT: REPLACED U喷 WITH F-7 START ---
+            player.playerWeapons.push({ // Add F-7 (替换 U喷)
+                ...weaponDefinitions.f7,
+                currentClipBullets: weaponDefinitions.f7.clipSize,
+                isReloading: false,
+                lastReloadTime: 0
+            });
+            // --- PLAYER WEAPON INIT: REPLACED U喷 WITH F-7 END ---
+            player.playerWeapons.push({ // Add VE-8 (替换 C-5)
+                ...weaponDefinitions.ve8,
+                currentClipBullets: weaponDefinitions.ve8.clipSize,
+                isReloading: false,
+                lastReloadTime: 0
+            });
+            player.playerWeapons.push({ // Add KIRD
+                ...weaponDefinitions.kird,
+                currentClipBullets: weaponDefinitions.kird.clipSize,
+                isReloading: false,
+                lastReloadTime: 0
+            });
+            player.playerWeapons.push({ // Add HV5
+                ...weaponDefinitions.hv5,
+                currentClipBullets: weaponDefinitions.hv5.clipSize,
+                isReloading: false,
+                lastReloadTime: 0
+            });
+            player.playerWeapons.push({ // Add DR-18
+                ...weaponDefinitions.dr18,
+                currentClipBullets: weaponDefinitions.dr18.clipSize,
+                isReloading: false,
+                lastReloadTime: 0
+            });
+            player.playerWeapons.push({ // Add M-cv7
+                ...weaponDefinitions.mcv7,
+                currentClipBullets: weaponDefinitions.mcv7.clipSize,
+                isReloading: false,
+                lastReloadTime: 0
+            });
+
+            player.selectedWeaponIndex = 0; // Default select pistol
+            player.currentWeapon = player.playerWeapons[player.selectedWeaponIndex];
+
+            allCharacters.push(player); // Add player to allCharacters array
+
+            // Create weapon box (remains the same as it's a static object)
+            const boxGeometry = new THREE.BoxGeometry(2, 2, 2);
+            const boxMaterial = new THREE.MeshPhongMaterial({ color: 0x8B4513 }); // Brown
+            weaponBox = new THREE.Mesh(boxGeometry, boxMaterial);
+            weaponBox.position.set(10, 1, -10); // Place in a specific scene location
+            scene.add(weaponBox);
+
+            // Create obstacles
+            const obstacleMaterial = new THREE.MeshPhongMaterial({ color: 0x4a4a4a }); // Dark gray
+            obstacleData.forEach(data => {
+                const geometry = new THREE.BoxGeometry(data.width, data.height, data.depth);
+                const obstacle = new THREE.Mesh(geometry, obstacleMaterial);
+                obstacle.position.set(data.x, data.height / 2, data.z); // Y-coordinate at half height
+                scene.add(obstacle);
+                obstacles.push(obstacle);
+            });
+
+
+            // Event listeners
+            window.addEventListener('resize', onWindowResize);
+            document.addEventListener('keydown', onKeyDown);
+            document.addEventListener('keyup', onKeyUp);
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mousedown', onMouseDown);
+            document.addEventListener('mouseup', onMouseUp);
+            // Disable context menu on right click to allow game use
+            document.addEventListener('contextmenu', (event) => event.preventDefault()); 
+            restartButton.addEventListener('click', restartGame);
+
+            // Initial UI update
+            updateUI();
+            updateWeaponUI(); // Update weapon UI
+
+            // Start the first wave
+            startWave(0);
+
+            // Request pointer lock for better first-person experience
+            const gameCanvas = document.getElementById('gameCanvas'); // Get canvas element
+            gameCanvas.requestPointerLock = gameCanvas.requestPointerLock || gameCanvas.mozRequestPointerLock;
+            gameCanvas.onclick = function() {
+                if (!isGamePaused) {
+                    gameCanvas.requestPointerLock();
+                }
+            };
+            document.addEventListener('pointerlockchange', lockChangeAlert, false);
+            document.addEventListener('mozpointerlockchange', lockChangeAlert, false);
+
+            function lockChangeAlert() {
+                if (document.pointerLockElement === gameCanvas ||
+                    document.mozPointerLockElement === gameCanvas) {
+                    console.log('The pointer lock is engaged.');
+                    crosshair.style.display = 'block'; // Show crosshair when locked
+                } else {
+                    console.log('The pointer lock is released.');
+                    crosshair.style.display = 'none'; // Hide crosshair when released
+                }
+            }
+
+            // Start game loop
+            animate();
+        }
+
+        // --- 窗口大小调整 ---
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // --- 键盘事件处理 ---
+        function onKeyDown(event) {
+            if (isGamePaused) return; // Disable input when game is paused
+            // If player is dead, disable all movement and actions
+            if (player.isDead) {
+                return;
+            }
+
+            switch (event.code) {
+                case 'KeyW': keys.w = true; break;
+                case 'KeyS': keys.s = true; break;
+                case 'KeyA': keys.a = true; break;
+                case 'KeyD': keys.d = true; break;
+                case 'Space':
+                    // Only allow jump if player is near the ground
+                    if (player.mesh.position.y <= playerGroundY + 0.01) { // Allow a small floating error
+                        keys.space = true;
+                        player.velocityY = jumpForce; // Apply jump force
+                    }
+                    break;
+                case 'KeyC':
+                    keys.c = true;
+                    // Check dash cooldown
+                    if (!player.isDashing && Date.now() - player.lastDashTime > dashCooldown) {
+                        player.isDashing = true;
+                        player.dashStartTime = Date.now();
+                        camera.getWorldDirection(dashDirection); // Dash direction aligns with current camera facing
+                        dashDirection.y = 0; // Ensure dash only on XZ plane
+                        dashDirection.normalize();
+                        player.lastDashTime = Date.now(); // Record current dash start time for cooldown
+                    }
+                    break;
+                case 'KeyR':
+                    keys.r = true;
+                    // Only reload if not already reloading and clip is not full
+                    if (!player.currentWeapon.isReloading && player.currentWeapon.currentClipBullets < player.currentWeapon.clipSize) {
+                        reloadWeapon(player);
+                    }
+                    break;
+                case 'Digit1': // Switch to Pistol
+                    if (player.selectedWeaponIndex !== 0) {
+                        player.selectedWeaponIndex = 0;
+                        player.currentWeapon = player.playerWeapons[player.selectedWeaponIndex];
+                        updateWeaponUI();
+                        player.lastShotTime = 0; // Reset shot time to prevent immediate firing
+                    }
+                    break;
+                case 'Digit2': // Switch to MP5
+                    if (player.selectedWeaponIndex !== 1) {
+                        player.selectedWeaponIndex = 1;
+                        player.currentWeapon = player.playerWeapons[player.selectedWeaponIndex];
+                        updateWeaponUI();
+                        player.lastShotTime = 0; // Reset shot time to prevent immediate firing
+                    }
+                    break;
+                case 'Digit3': // 切换到M56狙击枪
+                    if (player.selectedWeaponIndex !== 2) {
+                        player.selectedWeaponIndex = 2;
+                        player.currentWeapon = player.playerWeapons[player.selectedWeaponIndex];
+                        updateWeaponUI();
+                        player.lastShotTime = 0; // Reset shot time to prevent immediate firing
+                    }
+                    break;
+                // --- KEY BINDING FOR F-7 (REPLACING U喷) START ---
+                case 'Digit4': // 切换到F-7 (原U喷位置)
+                    if (player.selectedWeaponIndex !== 3) {
+                        player.selectedWeaponIndex = 3;
+                        player.currentWeapon = player.playerWeapons[player.selectedWeaponIndex];
+                        updateWeaponUI();
+                        player.lastShotTime = 0; // Reset shot time to prevent immediate firing
+                        // Ensure vision is off if switching away from DR-18
+                        if (!player.currentWeapon.enemyVision) {
+                            player.isAimingDR5 = false;
+                        }
+                    }
+                    break;
+                // --- KEY BINDING FOR F-7 (REPLACING U喷) END ---
+                case 'Digit5': // 切换到VE-8 (原C-5位置)
+                    if (player.selectedWeaponIndex !== 4) {
+                        player.selectedWeaponIndex = 4;
+                        player.currentWeapon = player.playerWeapons[player.selectedWeaponIndex];
+                        updateWeaponUI();
+                        player.lastShotTime = 0; // Reset shot time to prevent immediate firing
+                        // Reset player C-5 regen counter (no longer applies to VE-8)
+                        player.bulletsFiredSinceLastRegen = 0;
+                    }
+                    break;
+                case 'Digit6': // 切换到KIRD
+                    if (player.selectedWeaponIndex !== 5) {
+                        player.selectedWeaponIndex = 5;
+                        player.currentWeapon = player.playerWeapons[player.selectedWeaponIndex];
+                        updateWeaponUI();
+                        player.lastShotTime = 0; // Reset shot time to prevent immediate firing
+                    }
+                    break;
+                case 'Digit7': // 切换到HV5
+                    if (player.selectedWeaponIndex !== 6) {
+                        player.selectedWeaponIndex = 6;
+                        player.currentWeapon = player.playerWeapons[player.selectedWeaponIndex];
+                        updateWeaponUI();
+                        player.lastShotTime = 0; // Reset shot time to prevent immediate firing
+                    }
+                    break;
+                case 'Digit8': // 切换到DR-18 (原DR-5位置)
+                    if (player.selectedWeaponIndex !== 7) {
+                        player.selectedWeaponIndex = 7;
+                        player.currentWeapon = player.playerWeapons[player.selectedWeaponIndex];
+                        updateWeaponUI();
+                        player.lastShotTime = 0; // Reset shot time to prevent immediate firing
+                        // Ensure vision is off if switching away from DR-18
+                        if (!player.currentWeapon.enemyVision) {
+                            player.isAimingDR5 = false; // Renamed from isAimingDR5 to isAimingDR18, but keeping for compatibility
+                        }
+                    }
+                    break;
+                case 'Digit9': // 切换到M-cv7
+                    if (player.selectedWeaponIndex !== 8) {
+                        player.selectedWeaponIndex = 8;
+                        player.currentWeapon = player.playerWeapons[player.selectedWeaponIndex];
+                        updateWeaponUI();
+                        player.lastShotTime = 0; // Reset shot time to prevent immediate firing
+                        // Ensure vision is off if switching away from DR-5
+                        if (!player.currentWeapon.enemyVision) {
+                            player.isAimingDR5 = false;
+                        }
+                        // For C-5, reset player's bullets fired counter if switching to it
+                        if (player.currentWeapon.name === "C-5") {
+                            player.bulletsFiredSinceLastRegen = 0;
+                        }
+                    }
+                    break;
+                case 'KeyQ': // 按Q键从1号武器往后切换
+                    player.selectedWeaponIndex = (player.selectedWeaponIndex + 1) % player.playerWeapons.length;
+                    player.currentWeapon = player.playerWeapons[player.selectedWeaponIndex];
+                    updateWeaponUI();
+                    player.lastShotTime = 0; // Reset shot time to prevent immediate firing
+                    // Ensure vision is off if switching away from DR-5
+                    if (!player.currentWeapon.enemyVision) {
+                        player.isAimingDR5 = false;
+                    }
+                    // For C-5, reset player's bullets fired counter if switching to it (no longer applies to VE-8)
+                    if (player.currentWeapon.name === "C-5") {
+                        player.bulletsFiredSinceLastRegen = 0;
+                    }
+                    break;
+            }
+        }
+
+        function onKeyUp(event) {
+            if (isGamePaused) return;
+            // If player is dead, keys are already effectively disabled
+            if (player.isDead) {
+                return;
+            }
+            switch (event.code) {
+                case 'KeyW': keys.w = false; break;
+                case 'KeyS': keys.s = false; break;
+                case 'KeyA': keys.a = false; break;
+                case 'KeyD': keys.d = false; break;
+                case 'Space': keys.space = false; break;
+                case 'KeyC': keys.c = false; break;
+                case 'KeyR': keys.r = false; break;
+            }
+        }
+
+        // --- 鼠标事件处理 ---
+        function onMouseMove(event) {
+            if (isGamePaused || document.pointerLockElement !== gameCanvas) return; // Only rotate if pointer is locked
+            // If player is dead, disable camera rotation
+            if (player.isDead) {
+                return;
+            }
+
+            const movementX = event.movementX || event.mozMovementX || 0;
+            const movementY = event.movementY || event.mozMovementY || 0;
+
+            // Player left/right rotation (Yaw)
+            player.mesh.rotation.y -= movementX * mouseSensitivity;
+
+            // Camera up/down rotation (Pitch) - restricted
+            camera.rotation.x -= movementY * mouseSensitivity;
+            camera.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, camera.rotation.x)); // Limit to -90 to +90 degrees
+        }
+
+        function onMouseDown(event) {
+            if (isGamePaused) return;
+            // If player is dead, disable shooting
+            if (player.isDead) {
+                return;
+            }
+            if (event.button === 0) { // Left click
+                isMouseDown = true;
+            } else if (event.button === 2) { // Right click
+                // --- DR-18 RIGHT CLICK VISION START ---
+                if (player.currentWeapon.enemyVision) {
+                    isRightMouseDown = true;
+                    player.isAimingDR5 = true; // Still using isAimingDR5 for compatibility
+                }
+                // --- DR-18 RIGHT CLICK VISION END ---
+            }
+        }
+
+        function onMouseUp(event) {
+            if (isGamePaused) return;
+            // If player is dead, shooting is already disabled
+            if (player.isDead) {
+                return;
+            }
+            if (event.button === 0) { // Left click
+                isMouseDown = false;
+            } else if (event.button === 2) { // Right click
+                // --- DR-18 RIGHT CLICK VISION START ---
+                isRightMouseDown = false;
+                player.isAimingDR5 = false; // Still using isAimingDR5 for compatibility
+                // --- DR-18 RIGHT CLICK VISION END ---
+            }
+        }
+
+        // --- 游戏逻辑更新 ---
+        function update() {
+            if (isGameOver || isGamePaused) return;
+
+            const currentTime = Date.now();
+
+            // --- Update Player ---
+            // Gravity always applies
+            player.velocityY += gravity;
+            player.mesh.position.y += player.velocityY;
+            if (player.mesh.position.y < playerGroundY) {
+                player.mesh.position.y = playerGroundY;
+                player.velocityY = 0;
+            }
+
+            if (player.isDead) { // If player is dead, they cannot move or shoot
+                // Stop any ongoing dash
+                player.isDashing = false;
+                // Reset keys to prevent lingering movement (already handled in onKeyDown/Up, but good for safety)
+                keys.w = keys.a = keys.s = keys.d = keys.space = keys.c = false;
+                isMouseDown = false; // Disable shooting
+            } else { // Normal player movement and shooting if not dead
+                // Player Dash Logic
+                if (player.isDashing) {
+                    const elapsedDashTime = currentTime - player.dashStartTime;
+                    if (elapsedDashTime < dashDuration) {
+                        const dashMoveX = dashDirection.x * playerDashSpeed;
+                        const dashMoveZ = dashDirection.z * playerDashSpeed;
+                        moveAndCollide(player.mesh, dashMoveX, dashMoveZ, obstacles); // Dash also checks collision
+                    } else {
+                        player.isDashing = false; // Dash ends
+                    }
+                }
+
+                // Player Movement (based on camera orientation, only if not dashing)
+                if (!player.isDashing) {
+                    const forward = new THREE.Vector3();
+                    camera.getWorldDirection(forward); // Get camera's facing direction (player's "forward")
+                    forward.y = 0; // Ensure movement only on XZ plane
+                    forward.normalize();
+
+                    const right = new THREE.Vector3();
+                    right.crossVectors(forward, new THREE.Vector3(0, 1, 0)); // Get player's right direction
+                    right.normalize();
+
+                    const combinedMoveX = (keys.w || keys.s) ? (forward.x * (keys.w ? playerSpeed : -playerSpeed)) : 0;
+                    const combinedMoveZ = (keys.w || keys.s) ? (forward.z * (keys.w ? playerSpeed : -playerSpeed)) : 0;
+
+                    const strafeMoveX = (keys.a || keys.d) ? (right.x * (keys.d ? playerSpeed : -playerSpeed)) : 0;
+                    const strafeMoveZ = (keys.a || keys.d) ? (right.z * (keys.d ? playerSpeed : -playerSpeed)) : 0;
+
+                    const finalMoveX = combinedMoveX + strafeMoveX;
+                    const finalMoveZ = combinedMoveZ + strafeMoveZ;
+
+                    moveAndCollide(player.mesh, finalMoveX, finalMoveZ, obstacles); // Normal movement also checks collision
+
+                    // Restrict player movement boundaries
+                    const boundary = 24;
+                    player.mesh.position.x = Math.max(-boundary, Math.min(boundary, player.mesh.position.x));
+                    player.mesh.position.z = Math.max(-boundary, Math.min(boundary, player.mesh.position.z));
+                }
+
+                // Player Shooting Logic (General and VE-8 specific health regen)
+                if (isMouseDown && currentTime - player.lastShotTime > player.currentWeapon.fireRate && player.currentWeapon.currentClipBullets > 0 && !player.currentWeapon.isReloading) {
+                    createBullet(player, null);
+                    player.currentWeapon.currentClipBullets--;
+                    
+                    // VE-8 Player Health Regen Logic
+                    if (player.currentWeapon.name === "VE-8" && player.currentWeapon.playerHealthRegen) {
+                        player.health = Math.min(player.maxHealth, player.health + player.currentWeapon.playerHealthRegen);
+                    }
+                    // F-7 Player Health Cap Increase Logic
+                    if (player.currentWeapon.name === "F-7" && player.currentWeapon.playerHealthCapIncrease) {
+                        player.maxHealth += player.currentWeapon.playerHealthCapIncrease;
+                        player.health = Math.min(player.maxHealth, player.health + player.currentWeapon.playerHealthCapIncrease);
+                    }
+
+
+                    updateWeaponUI();
+                    player.lastShotTime = currentTime;
+                }
+
+                // Handle Player Reloading
+                if (player.currentWeapon.isReloading) {
+                    if (currentTime - player.currentWeapon.lastReloadTime > player.currentWeapon.reloadTime) {
+                        // Reload complete
+                        const bulletsToReload = player.currentWeapon.clipSize - player.currentWeapon.currentClipBullets;
+                        player.currentWeapon.currentClipBullets += bulletsToReload;
+                        player.currentWeapon.isReloading = false;
+                        updateWeaponUI();
+                    }
+                }
+            }
+
+
+            // Generate enemies based on wave logic
+            const currentWave = waveDefinitions[currentWaveIndex];
+            if (enemiesSpawnedInWave < currentWave.enemyCount && currentTime - lastEnemySpawnTime > (enemySpawnIntervalBase / currentWave.spawnRateMultiplier)) {
+                createEnemy();
+                enemiesSpawnedInWave++; // Increment count of enemies spawned for this wave
+                lastEnemySpawnTime = currentTime;
+            }
+
+            // Update all bullets (player and enemy)
+            const allBullets = [...playerBullets, ...enemyBullets];
+            for (let i = allBullets.length - 1; i >= 0; i--) {
+                const bullet = allBullets[i];
+                if (!bullet || !bullet.mesh) { // Check if bullet mesh exists
+                    if (i < playerBullets.length) playerBullets.splice(i, 1);
+                    else enemyBullets.splice(i - playerBullets.length, 1);
+                    continue;
+                }
+                bullet.mesh.position.add(bullet.velocity);
+
+                // Check bullet out of bounds or collision with obstacles
+                const bulletBox = new THREE.Box3().setFromObject(bullet.mesh);
+                let hitObstacle = false;
+                // Only check for obstacle collision if the bullet is NOT piercing (e.g., KIRD's bullet)
+                // M-cv7 bullets pierce only for player, so enemies' M-cv7 bullets do not pierce obstacles
+                if (!bullet.piercing) { 
+                    for (const obstacle of obstacles) {
+                        const obstacleBox = new THREE.Box3().setFromObject(obstacle);
+                        if (bulletBox.intersectsBox(obstacleBox)) {
+                            hitObstacle = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (Math.abs(bullet.mesh.position.x) > 30 || Math.abs(bullet.mesh.position.z) > 30 || Math.abs(bullet.mesh.position.y) > 30 || hitObstacle) {
+                    scene.remove(bullet.mesh);
+                    if (i < playerBullets.length) playerBullets.splice(i, 1);
+                    else enemyBullets.splice(i - playerBullets.length, 1);
+
+                    if (hitObstacle && bullet.explosive) {
+                        const impactPosition = bullet.mesh.position.clone();
+                        for (const char of allCharacters) {
+                            // 爆炸效果对发射子弹的人无效
+                            if (char !== bullet.shooter && !char.isDead && !char.isReviving) {
+                                if (char.mesh.position.distanceTo(impactPosition) < explosionRadius) {
+                                    takeDamage(char, explosionDamage, bullet.shooter);
+                                }
+                            }
+                        }
+                    }
+                    continue; // Move to next bullet
+                }
+
+                // Bullet collision with characters (player and enemies)
+                for (let j = allCharacters.length - 1; j >= 0; j--) {
+                    const targetCharacter = allCharacters[j];
+
+                    // Skip if target is dead or the bullet's shooter, or if target is currently reviving
+                    if (targetCharacter.isDead || targetCharacter === bullet.shooter || targetCharacter.isReviving) {
+                        continue;
+                    }
+
+                    if (bullet.mesh.position.distanceTo(targetCharacter.mesh.position) < 1) { // Simple collision check
+                        scene.remove(bullet.mesh);
+                        if (i < playerBullets.length) playerBullets.splice(i, 1);
+                        else enemyBullets.splice(i - playerBullets.length, 1);
+
+                        // Apply damage
+                        takeDamage(targetCharacter, bullet.damage, bullet.shooter);
+
+                        if (bullet.explosive) {
+                            const impactPosition = bullet.mesh.position.clone();
+                            // Apply explosion damage to nearby characters (excluding the shooter)
+                            for (const char of allCharacters) {
+                                // 爆炸效果对发射子弹的人无效
+                                if (char !== bullet.shooter && !char.isDead && !char.isReviving) {
+                                    if (char.mesh.position.distanceTo(impactPosition) < explosionRadius) {
+                                        takeDamage(char, explosionDamage, bullet.shooter); // Explosion damage
+                                    }
+                                }
+                            }
+                        }
+                        break; // Bullet hits one target and disappears (unless it's piercing, but explosive bullets disappear anyway)
+                    }
+                }
+            }
+
+            // Update enemies
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const enemy = enemies[i];
+                // Apply gravity first, regardless of dead state
+                const enemyGroundY = 0.6; // Enemy standing Y-coordinate
+                enemy.velocityY += gravity;
+                enemy.mesh.position.y += enemy.velocityY;
+                if (enemy.mesh.position.y < enemyGroundY) {
+                    enemy.mesh.position.y = enemyGroundY;
+                    enemy.velocityY = 0;
+                }
+
+                if (enemy.isDead) { // If enemy is dead, they are static, only gravity applied (handled above)
+                    continue; // Skip rest of movement and shooting logic for this enemy
+                }
+
+                // Enemy Dash Logic (still dashes towards player for aggressive behavior)
+                if (!enemy.isDashing && currentTime - enemy.lastDashTime > enemy.dashCooldown) {
+                    if (Math.random() < 0.015) { // 1.5% chance per update to attempt dash
+                        enemy.isDashing = true;
+                        enemy.dashStartTime = currentTime;
+                        enemy.dashDirection.subVectors(player.mesh.position, enemy.mesh.position); // Dash towards player
+                        enemy.dashDirection.y = 0;
+                        enemy.dashDirection.normalize();
+                        enemy.lastDashTime = currentTime;
+                    }
+                }
+
+                if (enemy.isDashing) {
+                    const elapsedEnemyDashTime = currentTime - enemy.dashStartTime;
+                    if (elapsedEnemyDashTime < enemy.dashDuration) {
+                        const dashMoveX = enemy.dashDirection.x * enemy.dashSpeed;
+                        const dashMoveZ = enemy.dashDirection.z * enemy.dashSpeed;
+                        moveAndCollide(enemy.mesh, dashMoveX, dashMoveZ, obstacles); // Enemy dash also checks collision
+                    } else {
+                        enemy.isDashing = false; // Dash ends
+                    }
+                } else {
+                    // Enemy Movement: Move towards selected shooting target or closest active character
+                    let moveTargetPosition = null;
+                    // If current target is valid, move towards it
+                    if (enemy.currentTarget && !enemy.currentTarget.isDead && !enemy.currentTarget.isReviving) {
+                        moveTargetPosition = enemy.currentTarget.mesh.position;
+                    } else {
+                        // Otherwise, find the closest active character to move towards
+                        const activeCharactersForMovement = allCharacters.filter(char =>
+                            !char.isDead && !char.isReviving && char !== enemy // Exclude self, dead, or reviving characters
+                        );
+                        if (activeCharactersForMovement.length > 0) {
+                            let closestChar = null;
+                            let minDist = Infinity;
+                            for (const char of activeCharactersForMovement) {
+                                const dist = enemy.mesh.position.distanceTo(char.mesh.position);
+                                if (dist < minDist) {
+                                    minDist = dist;
+                                    closestChar = char;
+                                }
+                            }
+                            if (closestChar) {
+                                enemy.currentTarget = closestChar; // Set as current target for movement and shooting
+                                moveTargetPosition = closestChar.mesh.position;
+                            }
+                        }
+                    }
+
+                    if (moveTargetPosition) {
+                        const directionToTarget = new THREE.Vector3().subVectors(moveTargetPosition, enemy.mesh.position).normalize();
+                        const enemyMoveX = directionToTarget.x * 0.05;
+                        const enemyMoveZ = directionToTarget.z * 0.05;
+                        moveAndCollide(enemy.mesh, enemyMoveX, enemyMoveZ, obstacles); // Enemy normal movement also checks collision
+                    }
+                    // If no valid target, enemy stands still.
+                }
+
+                // Enemy Jump and Gravity
+                if (currentTime - enemy.lastJumpTime > enemy.jumpInterval && enemy.mesh.position.y <= enemyGroundY + 0.01) {
+                    enemy.velocityY = jumpForce * 0.8; // Enemy jump force slightly less than player
+                    enemy.lastJumpTime = currentTime;
+                    enemy.jumpInterval = 3000 + Math.random() * 3000; // Reset next jump interval
+                }
+
+                enemy.velocityY += gravity;
+                enemy.mesh.position.y += enemy.velocityY;
+
+                // Restrict enemy from falling through ground
+                if (enemy.mesh.position.y < enemyGroundY) {
+                    enemy.mesh.position.y = enemyGroundY;
+                    enemy.velocityY = 0;
+                }
+
+                // Enemy Shooting and Reloading (General and F-7 specific health regen)
+                if (enemy.currentWeapon.currentClipBullets > 0 && !enemy.currentWeapon.isReloading && currentTime - enemy.lastShotTime > enemy.currentWeapon.fireRate) {
+                    const potentialTargets = allCharacters.filter(char =>
+                        !char.isDead && !char.isReviving && char !== enemy // Exclude self, dead, or reviving characters
+                    );
+
+                    let actualShootingTarget = null;
+                    for (const char of potentialTargets) {
+                        if (isTargetVisible(enemy.mesh.position, char.mesh.position, obstacles)) {
+                            actualShootingTarget = char;
+                            break;
+                        }
+                    }
+
+                    if (actualShootingTarget) {
+                        enemy.currentTarget = actualShootingTarget; // Ensure shooting target is also the movement target
+                        createBullet(enemy, actualShootingTarget.mesh.position); // Pass enemy and target position
+                        enemy.currentWeapon.currentClipBullets--;
+                        enemy.lastShotTime = currentTime;
+
+                        // F-7 Enemy Health Regen Logic
+                        if (enemy.currentWeapon.name === "F-7" && enemy.currentWeapon.enemyHealthRegenPerShot) {
+                            enemy.health = Math.min(enemy.maxHealth, enemy.health + enemy.currentWeapon.enemyHealthRegenPerShot);
+                        }
+                    }
+                } else if (enemy.currentWeapon.currentClipBullets === 0 && !enemy.currentWeapon.isReloading) {
+                    reloadWeapon(enemy); // Trigger reload for enemy
+                }
+
+                // Handle Enemy Reloading
+                if (enemy.currentWeapon.isReloading) {
+                    if (currentTime - enemy.currentWeapon.lastReloadTime > enemy.currentWeapon.reloadTime) {
+                        // Reload complete
+                        const bulletsToReload = enemy.currentWeapon.clipSize - enemy.currentWeapon.currentClipBullets;
+                        enemy.currentWeapon.currentClipBullets += bulletsToReload;
+                        enemy.currentWeapon.isReloading = false;
+                    }
+                }
+
+                // Check enemy out of bounds
+                const boundary = 28;
+                enemy.mesh.position.x = Math.max(-boundary, Math.min(boundary, enemy.mesh.position.x));
+                enemy.mesh.position.z = Math.max(-boundary, Math.min(boundary, enemy.mesh.position.z));
+            }
+
+            // Check for characters reviving
+            allCharacters.forEach(char => {
+                if (char.isReviving && currentTime - char.lastDeathTime > reviveDuration) {
+                    char.isReviving = false;
+                    if (char.type === 'player') {
+                        // Player specific revival visual/sound if needed
+                        player.mesh.material.visible = false; // Hide if it was visible during revival
+                    } else {
+                        char.mesh.material.opacity = 1; // Make enemy fully visible
+                        char.mesh.material.transparent = false;
+                    }
+                }
+            });
+
+            // DR-18 Enemy Vision Logic
+            if (player.currentWeapon.enemyVision && player.isAimingDR5) { // isAimingDR5 is still used for compatibility
+                enemies.forEach(enemy => {
+                    // Only apply vision effect to active enemies, not dead or reviving ones
+                    if (!enemy.isDead && !enemy.isReviving) {
+                        if (!enemy.originalMaterial) { // Store original material if not already stored
+                            enemy.originalMaterial = enemy.mesh.material;
+                        }
+                        // Apply a distinct transparent material for vision
+                        // Changed color to a brighter green and reduced opacity for clearer vision
+                        enemy.mesh.material = new THREE.MeshBasicMaterial({ color: 0x00FF33, transparent: true, opacity: 0.4 }); 
+                    }
+                });
+            } else {
+                // Revert enemy materials if not aiming DR-18 or switched weapon
+                enemies.forEach(enemy => {
+                    if (enemy.originalMaterial && enemy.mesh.material !== enemy.originalMaterial) {
+                        enemy.mesh.material = enemy.originalMaterial;
+                        // Ensure transparency is reset if it was applied for vision
+                        enemy.mesh.material.transparent = false;
+                        enemy.mesh.material.opacity = 1;
+                    }
+                });
+            }
+
+            // Update UI
+            updateUI();
+        }
+
+        // --- Apply Damage to a Character ---
+        function takeDamage(targetCharacter, amount, damageSource) {
+            // Prevent damage if target is already dead or currently reviving
+            if (targetCharacter.isDead || targetCharacter.isReviving) {
+                return;
+            }
+
+            targetCharacter.health -= amount;
+
+            if (targetCharacter.type === 'player') {
+                // Display hit indicator for player only
+                const hitSourcePosition = damageSource.mesh ? damageSource.mesh.position : new THREE.Vector3(0,0,0); // If damageSource is player, it has no mesh
+                const hitDirection = new THREE.Vector3().subVectors(hitSourcePosition, player.mesh.position);
+                hitDirection.y = 0; // Only care about horizontal direction
+                hitDirection.normalize();
+
+                // Get player (camera) forward direction
+                const playerForward = new THREE.Vector3();
+                camera.getWorldDirection(playerForward);
+                playerForward.y = 0; // Project to XZ plane
+                playerForward.normalize();
+
+                // Calculate player's right direction
+                const playerRight = new THREE.Vector3();
+                playerRight.crossVectors(playerForward, new THREE.Vector3(0, 1, 0)); // World Y-axis up
+                playerRight.normalize();
+
+                // Calculate dot products to determine direction
+                const dotFront = hitDirection.dot(playerForward);
+                const dotRight = hitDirection.dot(playerRight);
+
+                let indicatorToShow = null;
+                const threshold = 0.5; // Threshold for determining main direction
+
+                // Determine and show indicator based on dot products
+                if (dotFront > threshold) {
+                    indicatorToShow = hitIndicatorFront;
+                } else if (dotFront < -threshold) {
+                    indicatorToShow = hitIndicatorBack;
+                } else if (dotRight > threshold) {
+                    indicatorToShow = hitIndicatorRight;
+                } else if (dotRight < -threshold) {
+                    indicatorToShow = hitIndicatorLeft;
+                } else {
+                    // If diagonal hit, choose the direction with the largest absolute dot product
+                    if (Math.abs(dotFront) > Math.abs(dotRight)) {
+                        indicatorToShow = dotFront > 0 ? hitIndicatorFront : hitIndicatorBack;
+                    } else {
+                        indicatorToShow = dotRight > 0 ? hitIndicatorRight : hitIndicatorLeft;
+                    }
+                }
+
+                if (indicatorToShow) {
+                    indicatorToShow.style.opacity = 1;
+                    indicatorToShow.style.display = 'block'; // Ensure visible
+                    setTimeout(() => {
+                        indicatorToShow.style.opacity = 0;
+                        // Fully hide after transition
+                        setTimeout(() => {
+                            indicatorToShow.style.display = 'none';
+                        }, 100); // Match CSS transition duration
+                    }, 400); // Indicator visible for 0.4 seconds
+                }
+            }
+
+            if (targetCharacter.health <= 0) {
+                targetCharacter.revivesRemaining--;
+                // If revivesRemaining is greater than 0, revive the character
+                if (targetCharacter.revivesRemaining > 0) {
+                    // Revive character
+                    targetCharacter.health = targetCharacter.maxHealth;
+                    targetCharacter.isReviving = true;
+                    targetCharacter.lastDeathTime = Date.now();
+                    const respawnPos = getSafeRespawnPosition();
+                    targetCharacter.mesh.position.copy(respawnPos);
+                    targetCharacter.velocityY = 0; // Reset vertical velocity
+
+                    if (targetCharacter.type === 'player') {
+                        // Player specific revive effects if any
+                        // For player, we don't change visibility of the mesh as it's invisible
+                    } else {
+                        // For enemies, make them temporarily transparent
+                        targetCharacter.mesh.material.transparent = true;
+                        targetCharacter.mesh.material.opacity = 0.5;
+                    }
+                } else {
+                    // Character permanently eliminated (revivesRemaining is now 0)
+                    console.log(`${targetCharacter.type} is permanently eliminated! Revives remaining: ${targetCharacter.revivesRemaining}`); // Debug log
+                    targetCharacter.isDead = true; // Mark as dead, but keep mesh in scene
+
+                    // Visual indication for eliminated character
+                    if (targetCharacter.mesh.material instanceof THREE.MeshPhongMaterial || targetCharacter.mesh.material instanceof THREE.MeshBasicMaterial) {
+                        targetCharacter.mesh.material.color.set(0x333333); // Darker color
+                        targetCharacter.mesh.material.transparent = true;
+                        targetCharacter.mesh.material.opacity = 0.3; // Make semi-transparent
+                    }
+
+                    // For enemies, increment defeated count for current wave
+                    if (targetCharacter.type === 'enemy') {
+                        enemiesDefeatedInWave++;
+                        // M-cv7 Player Kill Effects
+                        if (damageSource.type === 'player' && damageSource.currentWeapon.name === 'M-cv7') {
+                            // Increase player's max health and current health
+                            damageSource.maxHealth += damageSource.currentWeapon.healthCapIncreaseOnKill;
+                            damageSource.health = Math.min(damageSource.maxHealth, damageSource.health + damageSource.currentWeapon.healthCapIncreaseOnKill);
+                            
+                            damageSource.mcv7Kills++; // Increment M-cv7 kill counter
+                            if (damageSource.mcv7Kills % damageSource.currentWeapon.obstacleOnKillCount === 0) {
+                                // Generate a temporary obstacle at enemy death location
+                                const tempObstacleGeometry = new THREE.BoxGeometry(3, 3, 3); // Example size for generated obstacle
+                                const tempObstacleMaterial = new THREE.MeshPhongMaterial({ color: 0x00FF00, transparent: true, opacity: 0.7 }); // Green, semi-transparent
+                                const tempObstacle = new THREE.Mesh(tempObstacleGeometry, tempObstacleMaterial);
+                                tempObstacle.position.copy(targetCharacter.mesh.position);
+                                tempObstacle.position.y = tempObstacle.geometry.parameters.height / 2; // Place on ground
+                                scene.add(tempObstacle);
+                                temporaryObstacles.push(tempObstacle);
+                                obstacles.push(tempObstacle); // Add to main obstacles array for collision detection
+                            }
+                        }
+
+                        // Remove from the 'enemies' array so they don't get processed in the spawning logic
+                        const index = enemies.indexOf(targetCharacter);
+                        if (index > -1) {
+                            enemies.splice(index, 1);
+                        }
+                    }
+                    checkWinCondition(); // Check win condition after a character dies
+                }
+            }
+            updateUI(); // Always update UI after health changes
+        }
+
+        // --- Create Bullet (unified for player and enemies) ---
+        function createBullet(shooter, targetPosition = null) { // Added targetPosition with default null
+            const bulletGeometry = new THREE.SphereGeometry(0.2, 8, 8);
+            
+            // Determine bullet properties based on weapon type
+            const isSniper = shooter.currentWeapon.name === "M56狙击枪";
+            const isUSpray = shooter.currentWeapon.name === "U喷"; // This variable is now for the old U喷, not F-7
+            const isVE8 = shooter.currentWeapon.name === "VE-8";
+            const isKIRD = shooter.currentWeapon.name === "KIRD";
+            const isHV5 = shooter.currentWeapon.name === "HV5";
+            const isDR18 = shooter.currentWeapon.name === "DR-18";
+            const isMCV7 = shooter.currentWeapon.name === "M-cv7";
+            const isF7 = shooter.currentWeapon.name === "F-7";
+
+
+            const bulletColor = shooter.type === 'player' ? 
+                                    (isSniper ? 0x800080 : (isVE8 ? 0xFF00FF : (isKIRD ? 0x00FFFF : (isHV5 ? 0xFFA500 : (isDR18 ? 0x4B0082 : (isMCV7 ? 0xFFD700 : (isF7 ? 0xFF4500 : 0xffff00))))))) : // Player: Sniper=purple, VE-8=magenta, KIRD=cyan, HV5=orange, DR-18=indigo, M-cv7=gold, F-7=orange-red, others=yellow
+                                    0xffa500; // Enemy: orange
+
+            const bulletMaterial = new THREE.MeshBasicMaterial({ color: bulletColor }); 
+
+            // Calculate base direction
+            const baseDirection = new THREE.Vector3();
+            if (shooter.type === 'player') {
+                camera.getWorldDirection(baseDirection); // Player's camera direction
+            } else {
+                if (targetPosition) {
+                    baseDirection.subVectors(targetPosition, shooter.mesh.position).normalize();
+                } else {
+                    baseDirection.subVectors(player.mesh.position, shooter.mesh.position).normalize();
+                }
+            }
+
+            // --- MODIFIED BULLETS TO FIRE AND SPREAD LOGIC START ---
+            const bulletsToFire = (shooter.currentWeapon.bulletsPerShot && shooter.currentWeapon.name === "U喷") ? shooter.currentWeapon.bulletsPerShot : 1; // Only U喷 has bulletsPerShot
+            const spreadAngle = (shooter.currentWeapon.spreadAngle && shooter.currentWeapon.name === "U喷") ? shooter.currentWeapon.spreadAngle : 0; // Only U喷 has spread
+            // --- MODIFIED BULLETS TO FIRE AND SPREAD LOGIC END ---
+            const bulletsCreated = [];
+
+            for (let i = 0; i < bulletsToFire; i++) {
+                const bulletMesh = new THREE.Mesh(bulletGeometry, bulletMaterial);
+
+                // Bullet starts from shooter's position
+                const shooterPosition = shooter.mesh.position.clone();
+                bulletMesh.position.copy(shooterPosition);
+                bulletMesh.position.y += 0.5; // Slightly raise bullet origin
+
+                const currentBulletDirection = baseDirection.clone();
+
+                if (isUSpray) { // Only U喷 has spread
+                    // Apply spread for U喷
+                    const angleOffset = (i - (bulletsToFire - 1) / 2) * spreadAngle; // -spread, 0, +spread
+                    const axis = new THREE.Vector3(0, 1, 0); // Rotate around Y-axis for horizontal spread
+                    currentBulletDirection.applyAxisAngle(axis, angleOffset);
+                }
+
+                // Bullet velocity
+                const bulletVelocity = currentBulletDirection.multiplyScalar(
+                    isSniper ? bulletSpeed * 2.5 : // Sniper bullet is fastest
+                    (isUSpray ? bulletSpeed * 0.8 : // U喷子弹速度略慢于普通子弹
+                    (isVE8 ? bulletSpeed * 1.0 : // VE-8 bullet speed is normal
+                    (isKIRD ? bulletSpeed * 1.0 : // KIRD bullet speed is normal
+                    (isHV5 ? bulletSpeed * 0.9 : // HV5 bullet speed slightly slower than normal
+                    (isDR18 ? bulletSpeed * 2.0 : // DR-18 bullet speed is very fast
+                    (isMCV7 ? bulletSpeed * 1.5 : // M-cv7 bullet speed is fast
+                    (isF7 ? bulletSpeed * 1.5 : // F-7 bullet speed is fast
+                    (shooter.currentWeapon.fireRate === 100 ? bulletSpeed * 1.5 : bulletSpeed)))))))) // MP5 faster than Pistol
+                ); 
+
+                const bullet = {
+                    mesh: bulletMesh,
+                    velocity: bulletVelocity,
+                    shooter: shooter, // Store reference to the shooter
+                    damage: shooter.currentWeapon.bulletDamage,
+                    // M-cv7 Piercing Logic: Only player's M-cv7 bullets pierce
+                    piercing: (shooter.type === 'player' && shooter.currentWeapon.playerPiercing) || shooter.currentWeapon.piercing || false,
+                    explosive: shooter.currentWeapon.explosive || false // Set explosive property based on weapon
+                };
+
+                scene.add(bullet.mesh);
+                if (shooter.type === 'player') {
+                    playerBullets.push(bullet);
+                } else {
+                    enemyBullets.push(bullet);
+                }
+                bulletsCreated.push(bullet);
+            }
+            return bulletsCreated; // Return array of created bullets
+        }
+
+        // --- Create Enemy ---
+        function createEnemy() {
+            const enemyGeometry = new THREE.BoxGeometry(1.2, 1.2, 1.2);
+            const enemyMaterial = new THREE.MeshPhongMaterial({ color: 0xff0000 }); // Red
+            const enemyMesh = new THREE.Mesh(enemyGeometry, enemyMaterial);
+
+            // Randomly assign a weapon to the enemy
+            // Exclude DR-18 and VE-8 for enemies
+            const weaponChoices = [
+                weaponDefinitions.pistol,
+                weaponDefinitions.mp5,
+                weaponDefinitions.sniper,
+                // --- MODIFIED ENEMY WEAPON CHOICES START ---
+                // Removed uspray, F-7 is now a choice for enemies
+                weaponDefinitions.f7, // F-7 is now a choice for enemies
+                weaponDefinitions.kird,
+                weaponDefinitions.hv5,
+                weaponDefinitions.mcv7
+            ].filter(weapon => !weapon.enemyForbidden); // Filter out weapons forbidden for enemies
+            // --- MODIFIED ENEMY WEAPON CHOICES END ---
+            const randomWeaponDef = weaponChoices[Math.floor(Math.random() * weaponChoices.length)];
+
+            const enemy = {
+                mesh: enemyMesh,
+                type: 'enemy', // Identify as enemy
+                maxHealth: 100,
+                health: 100,
+                maxRevives: 3,
+                revivesRemaining: 3,
+                isDead: false, // Start not dead
+                isReviving: false,
+                lastDeathTime: 0,
+                velocityY: 0,
+                lastJumpTime: Date.now(),
+                jumpInterval: 3000 + Math.random() * 3000,
+                isDashing: false,
+                dashStartTime: 0,
+                dashDuration: 150,
+                dashCooldown: 2000 + Math.random() * 3000,
+                lastDashTime: Date.now(),
+                dashSpeed: 0.3,
+                dashDirection: new THREE.Vector3(),
+                currentWeapon: {
+                    ...randomWeaponDef,
+                    currentClipBullets: randomWeaponDef.clipSize,
+                    isReloading: false,
+                    lastReloadTime: 0
+                },
+                lastShotTime: Date.now(), // Enemy's specific last shot time
+                currentTarget: null, // Initialize enemy's current target
+                // C-5 specific state for enemy (now VE-8, but this property is for enemy regen)
+                bulletsFiredSinceLastRegen: 0, // For C-5 enemy health regen (no longer applies to VE-8)
+                originalMaterial: enemyMaterial // Store original material for vision effect
+            };
+
+            const respawnPos = getSafeRespawnPosition();
+            enemy.mesh.position.copy(respawnPos);
+            enemy.mesh.position.y = 0.6; // Enemy stands on the ground
+
+            scene.add(enemy.mesh);
+            enemies.push(enemy);
+            allCharacters.push(enemy); // Add enemy to allCharacters array
+        }
+
+        // --- Reload Weapon Function (unified for player and enemies) ---
+        function reloadWeapon(character) {
+            if (character.currentWeapon.isReloading || character.currentWeapon.currentClipBullets === character.currentWeapon.clipSize) {
+                return;
+            }
+
+            character.currentWeapon.isReloading = true;
+            character.currentWeapon.lastReloadTime = Date.now();
+            if (character.type === 'player') {
+                updateWeaponUI(); // Only update player UI for player's reload
+            }
+        }
+
+        // --- Update UI ---
+        function updateUI() {
+            healthDisplay.textContent = `生命值: ${Math.max(0, player.health)} (复活: ${player.revivesRemaining})`;
+            scoreDisplay.textContent = `分数: ${score}`;
+            const currentWave = waveDefinitions[currentWaveIndex];
+            waveDisplay.textContent = `波次: ${currentWave.waveNumber} / ${waveDefinitions.length} (敌人: ${enemiesDefeatedInWave}/${currentWave.enemyCount})`;
+        }
+
+        // --- Update Weapon UI (player only) ---
+        function updateWeaponUI() {
+            weaponIcon.src = player.currentWeapon.weaponImage;
+            weaponNameDisplay.textContent = player.currentWeapon.name;
+
+            if (player.currentWeapon.isReloading) {
+                bulletCountDisplay.textContent = "装弹中...";
+            } else {
+                bulletCountDisplay.textContent = `${player.currentWeapon.currentClipBullets}/${player.currentWeapon.clipSize} (∞)`;
+            }
+        }
+
+        // --- Start a new wave ---
+        function startWave(waveIndex) {
+            if (waveIndex >= waveDefinitions.length) {
+                // All waves completed, player wins!
+                gameOver("你成功击败了所有敌人");
+                return;
+            }
+
+            currentWaveIndex = waveIndex;
+            enemiesSpawnedInWave = 0;
+            enemiesDefeatedInWave = 0;
+            lastEnemySpawnTime = Date.now(); // Reset spawn timer for new wave
+
+            // Clear any remaining active enemies from previous wave (they should be dead, but safety)
+            // Note: Dead enemies remain in allCharacters, but are filtered out by isDead check in update loop
+            enemies.length = 0; // Clear active enemies array
+
+            // Also clear allCharacters of old dead enemies to prevent accumulation, except player
+            // This ensures allCharacters only contains player and currently active/reviving enemies
+            const playerChar = allCharacters.find(char => char.type === 'player');
+            allCharacters.length = 0;
+            if (playerChar) {
+                allCharacters.push(playerChar);
+            }
+
+            // --- Clear temporary obstacles from previous wave START ---
+            for (const tempObstacle of temporaryObstacles) {
+                scene.remove(tempObstacle);
+                // Also remove from main obstacles array
+                const index = obstacles.indexOf(tempObstacle);
+                if (index > -1) {
+                    obstacles.splice(index, 1);
+                }
+            }
+            temporaryObstacles.length = 0; // Clear the array
+            // --- Clear temporary obstacles from previous wave END ---
+
+            console.log(`--- 开始波次 ${waveDefinitions[currentWaveIndex].waveNumber} ---`);
+            updateUI(); // Update UI for new wave
+        }
+
+
+        // --- Check Win Condition (Modified for Wave Mode) ---
+        function checkWinCondition() {
+            // If player is dead, game over regardless of waves
+            if (player.isDead) {
+                gameOver("你被淘汰了");
+                return;
+            }
+
+            // Check if all enemies in the current wave are defeated
+            const currentWave = waveDefinitions[currentWaveIndex];
+            if (enemiesDefeatedInWave === currentWave.enemyCount) {
+                // Current wave completed, advance to next wave or win
+                if (currentWaveIndex < waveDefinitions.length - 1) {
+                    // Advance to next wave
+                    console.log(`波次 ${currentWave.waveNumber} 完成！`);
+                    startWave(currentWaveIndex + 1);
+                } else {
+                    // All waves completed, player wins!
+                    gameOver("你成功击败了所有敌人");
+                }
+            }
+            // If player is not dead and current wave is not yet completed, game continues.
+        }
+
+        // --- Game Over ---
+        function gameOver(statusMessage) { // Change parameter name to statusMessage for generality
+            isGameOver = true;
+            isGamePaused = true; // Pause game logic
+            document.body.style.cursor = 'auto'; // Show mouse cursor
+
+            // Set text based on the status message
+            if (statusMessage === "你被淘汰了") {
+                messageText.textContent = `你被淘汰了！游戏结束！你的分数是: ${score}`;
+            } else if (statusMessage === "你成功击败了所有敌人") { // 新增：波次胜利消息
+                messageText.textContent = `恭喜！你成功击败了所有敌人！你的分数是: ${score}`;
+            }
+            else {
+                messageText.textContent = `游戏结束！${statusMessage} 获胜！你的分数是: ${score}`;
+            }
+
+            gameMessage.style.display = 'block'; // Show game over message box
+            console.log("Game Over message displayed. Game message element display style:", gameMessage.style.display); // Debug log
+
+            // Remove all bullets from scene
+            playerBullets.forEach(bullet => scene.remove(bullet.mesh));
+            playerBullets.length = 0;
+            enemyBullets.forEach(bullet => scene.remove(bullet.mesh));
+            enemyBullets.length = 0;
+            
+            // Do NOT remove character meshes from scene here, as they should remain visible if eliminated
+            // They will be cleared on restart.
+        }
+
+        // --- Restart Game ---
+        function restartGame() {
+            // Clear existing characters from scene and arrays
+            allCharacters.forEach(char => {
+                if (char.mesh) {
+                    scene.remove(char.mesh); // Remove all character meshes from scene
+                }
+            });
+            allCharacters.length = 0; // Clear all characters array
+            enemies.length = 0; // Clear enemies array
+
+            // Clear bullets
+            playerBullets.forEach(bullet => scene.remove(bullet.mesh));
+            playerBullets.length = 0;
+            enemyBullets.forEach(bullet => scene.remove(bullet.mesh));
+            enemyBullets.length = 0;
+
+
+            isGameOver = false;
+            isGamePaused = false;
+            score = 0;
+            document.body.style.cursor = 'none'; // Hide mouse cursor again for gameplay
+
+            // Re-initialize player
+            player.health = player.maxHealth;
+            player.revivesRemaining = player.maxRevives;
+            player.isDead = false;
+            player.isReviving = false;
+            player.mesh.position.set(0, playerGroundY, 0); // Player back to initial position
+            player.mesh.rotation.y = 0; // Reset player rotation
+            camera.rotation.x = 0; // Reset camera pitch
+            player.velocityY = 0; // Reset player jump velocity
+            player.isDashing = false;
+            player.dashStartTime = 0;
+            player.lastDashTime = 0;
+            player.lastShotTime = 0;
+            player.currentTarget = null; // Reset player target
+            player.isAimingDR5 = false; // Reset DR-5 aiming state
+            player.bulletsFiredSinceLastRegen = 0; // Reset C-5 player regen counter (no longer applies to VE-8)
+            player.mcv7Kills = 0; // Reset M-cv7 kill counter
+            // Reset player mesh material if it was changed (e.g., made transparent/darker)
+            if (player.mesh.material instanceof THREE.MeshBasicMaterial) {
+                player.mesh.material.visible = false; // Original state
+            }
+
+
+            // Re-initialize player weapons
+            player.playerWeapons = [];
+            player.playerWeapons.push({
+                ...weaponDefinitions.pistol,
+                currentClipBullets: weaponDefinitions.pistol.clipSize,
+                isReloading: false,
+                lastReloadTime: 0
+            });
+            player.playerWeapons.push({
+                ...weaponDefinitions.mp5,
+                currentClipBullets: weaponDefinitions.mp5.clipSize,
+                isReloading: false,
+                lastReloadTime: 0
+            });
+            player.playerWeapons.push({ // Add M56 Sniper Rifle
+                ...weaponDefinitions.sniper,
+                currentClipBullets: weaponDefinitions.sniper.clipSize,
+                isReloading: false,
+                lastReloadTime: 0
+            });
+            // --- PLAYER WEAPON INIT ON RESTART: REPLACED U喷 WITH F-7 START ---
+            player.playerWeapons.push({ // Add F-7 (替换 U喷)
+                ...weaponDefinitions.f7,
+                currentClipBullets: weaponDefinitions.f7.clipSize,
+                isReloading: false,
+                lastReloadTime: 0
+            });
+            // --- PLAYER WEAPON INIT ON RESTART: REPLACED U喷 WITH F-7 END ---
+            player.playerWeapons.push({ // Add VE-8 (替换 C-5)
+                ...weaponDefinitions.ve8,
+                currentClipBullets: weaponDefinitions.ve8.clipSize,
+                isReloading: false,
+                lastReloadTime: 0
+            });
+            player.playerWeapons.push({ // Add KIRD
+                ...weaponDefinitions.kird,
+                currentClipBullets: weaponDefinitions.kird.clipSize,
+                isReloading: false,
+                lastReloadTime: 0
+            });
+            player.playerWeapons.push({ // Add HV5
+                ...weaponDefinitions.hv5,
+                currentClipBullets: weaponDefinitions.hv5.clipSize,
+                isReloading: false,
+                lastReloadTime: 0
+            });
+            player.playerWeapons.push({ // Add DR-18
+                ...weaponDefinitions.dr18,
+                currentClipBullets: weaponDefinitions.dr18.clipSize,
+                isReloading: false,
+                lastReloadTime: 0
+            });
+            player.playerWeapons.push({ // Add M-cv7
+                ...weaponDefinitions.mcv7,
+                currentClipBullets: weaponDefinitions.mcv7.clipSize,
+                isReloading: false,
+                lastReloadTime: 0
+            });
+
+            player.selectedWeaponIndex = 0;
+            player.currentWeapon = player.playerWeapons[player.selectedWeaponIndex];
+
+            allCharacters.push(player); // Add player back to allCharacters array
+
+            gameMessage.style.display = 'none';
+            updateUI();
+            updateWeaponUI();
+            
+            // Start the first wave again
+            startWave(0);
+        }
+
+        // --- 视线检测辅助函数 ---
+        // 声明 Raycaster 和 Vector3 用于复用，避免频繁创建对象
+        const raycaster = new THREE.Raycaster();
+        const directionVector = new THREE.Vector3();
+
+        /**
+         * 检查目标是否在射手的视线范围内（没有障碍物阻挡）。
+         * @param {THREE.Vector3} shooterPosition 射手的位置。
+         * @param {THREE.Vector3} targetPosition 目标的位置。
+         * @param {Array<THREE.Mesh>} obstacles 场景中的障碍物网格数组。
+         * @returns {boolean} 如果目标可见则返回 true，否则返回 false。
+         */
+        function isTargetVisible(shooterPosition, targetPosition, obstacles) {
+            // 将射线起点稍微抬高，模拟角色眼睛的高度
+            const rayOrigin = shooterPosition.clone();
+            rayOrigin.y += 0.5; // 假设角色眼睛在模型中心上方0.5单位
+
+            // 计算从射手到目标的向量并归一化
+            directionVector.subVectors(targetPosition, rayOrigin).normalize();
+
+            // 设置射线
+            raycaster.set(rayOrigin, directionVector);
+
+            // 检测与障碍物的交叉点
+            // 注意：这里只检测 obstacles 数组中的对象，不递归检查它们的子对象
+            const intersects = raycaster.intersectObjects(obstacles, false); // false 表示不递归检查子对象
+
+            if (intersects.length > 0) {
+                // 如果有交叉点，检查第一个交叉点是否在目标之前
+                const distanceToFirstObstacle = rayOrigin.distanceTo(intersects[0].point);
+                const distanceToTarget = rayOrigin.distanceTo(targetPosition);
+
+                // 增加一个小的容错值，避免浮点数精度问题导致射线起点与障碍物边缘重合
+                const epsilon = 0.1; 
+
+                // 如果第一个障碍物比目标更近，则目标被阻挡，不可见
+                return distanceToFirstObstacle >= distanceToTarget - epsilon;
+            }
+            // 没有障碍物阻挡，目标可见
+            return true;
+        }
+
+        // --- 游戏循环 ---
+        function animate() {
+            requestAnimationFrame(animate);
+            update();
+            renderer.render(scene, camera);
+        }
+
+        // --- 页面加载完成后初始化游戏 ---
+        window.onload = init;
+
+    </script>
+</body>
+</html>
